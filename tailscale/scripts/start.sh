@@ -64,6 +64,9 @@ if dumpsys connectivity 2>/dev/null | grep -q "VPN:com.tailscale.ipn"; then
     log Warning "Official Tailscale app is connected and owns the VPN — stop it, or this module cannot tunnel."
 fi
 
+# Default MagicDNS to ON if not explicitly disabled
+[ -f "${TS_RUN_DIR}/magicdns.enabled" ] || touch "${TS_RUN_DIR}/magicdns.enabled" 2>/dev/null || true
+
 start_service
 start_inotifyd
 start_netenv_watch
