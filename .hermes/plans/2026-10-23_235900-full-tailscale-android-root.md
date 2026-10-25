@@ -436,7 +436,77 @@ Update README with:
 - ADB testing commands
 
 
-## Risks, tradeoffs, and open questions
+## Task 15: Android netd DNS integration (app parity)
+
+**STATUS: NOT FEASIBLE on Android 14+** — `ndc resolver` commands are crippled/removed. The DNS resolver module uses a new internal API not accessible via shell. Our iptables DNAT approach is the best available alternative for root modules.
+
+**Alternative approaches to research:**
+1. `cmd connectivity` — newer command, may have DNS subcommands
+2. `settings put global` — can set private DNS mode
+3. Kernel-level DNS interception via eBPF (Android 14+ supports eBPF)
+4. Keep iptables DNAT (current, working approach)
+
+**Current approach is sufficient:** iptables DNAT redirects all port 53 traffic to 100.100.100.100, which handles both MagicDNS (*.ts.net) and upstream resolution (tailscaled forwards non-tailnet queries). This works for all Android apps.
+
+## Task 16: Exit node full tunnel support
+
+**Files:** `tailscale/scripts/netenv.sh`, `tailscale/scripts/start.sh`
+
+Ensure exit nodes route ALL traffic (not just tailnet) through tailscale0.
+
+1. When exit node is active, add default route via tailscale0 (higher priority than physical).
+2. Use Android's policy routing to steer all traffic to tailscale0.
+3. Handle network changes (WiFi↔cellular) without breaking exit node.
+4. Test with `tailscale set --exit-node=<node>`.
+
+**Verification:**
+```sh
+# On device with exit node active:
+su -c "curl -s https://ipinfo.io/ip"
+# Expected: exit node's public IP
+```
+
+## Task 17: Subnet routing support
+
+**Files:** `tailscale/scripts/netenv.sh`, `tailscale/scripts/start.sh`
+
+Enable subnet routing (advertise local subnets via Tailscale).
+
+1. Enable IP forwarding: `sysctl -w net.ipv4.ip_forward=1`
+2. Add iptables FORWARD rules for tailscale0 ↔ LAN interface.
+3. Handle SELinux blocking on some ROMs.
+4. Test with `tailscale set --advertise-routes=192.168.1.0/24`.
+
+**Verification:**
+```sh
+# From another tailnet device:
+ping 192.168.1.1  # should reach the Android device's LAN gateway
+```
+
+## Task 18: IPv6 MagicDNS
+
+**Files:** `tailscale/scripts/magicdns.sh`
+
+Add IPv6 DNAT for MagicDNS (currently only IPv4).
+
+1. Check if ip6tables nat table is available.
+2. If yes, add IPv6 DNAT rules for port 53 → fd7a:115c:a1e0::53 (MagicDNS IPv6).
+3. If no, document limitation.
+
+## Task 19: Instant network change detection
+
+**Files:** `tailscale/scripts/netenv.sh`
+
+Replace 15s polling with instant network change detection.
+
+1. Use `dumpsys connectivity` with inotify on `/data/system/netstats/` or similar.
+2. Or use `logcat -b events` to watch for connectivity changes.
+3. Fall back to 15s polling if instant detection isn't available.
+
+**Verification:**
+```sh
+# Switch WiFi→cellular, verify DNS/routing updates within 2s
+```
 
 1. **iptables availability** — Android 14+ may use nftables instead of iptables. Need to detect and handle both. The `iptables` command might be a wrapper around nftables on newer Android.
 
