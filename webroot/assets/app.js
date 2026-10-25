@@ -27,7 +27,7 @@ if (isMock) {
       b: { HostName: 'vps-exit', TailscaleIPs: ['100.64.0.3'], Online: true, ExitNode: true }
     }
   };
-  var MOCK_PREFS = { CorpDNS: true, RouteAll: false, AdvertiseRoutes: [], ExitNodeAllowLANAccess: false };
+  var MOCK_PREFS = { CorpDNS: true, RouteAll: false, AdvertiseRoutes: [], ExitNodeAllowLANAccess: false, ShieldsUp: false, RunSSH: false, ExitNodeID: '' };
   window.ksu = {
     exec: function (cmd, opts, cb) {
       var out = '';
@@ -133,7 +133,7 @@ function schedulePoll(delay) {
 function bump() { lastAction = Date.now(); }
 
 /* ===== render ===== */
-var peersSig = '';
+var peersSig = '', exitSig = '';
 function render() {
   var st = S.status, on = isRunning(), login = needsLogin();
 
@@ -196,14 +196,41 @@ function render() {
     }
   } else { peersSig = ''; }
 
+  /* exit node picker */
+  var exitPeers = (on && st && st.Peer) ? Object.keys(st.Peer).map(function (k) { return st.Peer[k]; }).filter(function (p) { return p.ExitNode; }) : [];
+  exitPeers.sort(function (a, b) { return (b.Online === true) - (a.Online === true) || String(a.HostName).localeCompare(String(b.HostName)); });
+  setHidden('exit-card', !(on && exitPeers.length));
+  if (on && exitPeers.length) {
+    var activeExitIp = (st.ExitNodeStatus && st.ExitNodeStatus.TailscaleIPs && st.ExitNodeStatus.TailscaleIPs[0]) || '';
+    var rows = '<div class="exit-row" data-exit="">' +
+      '<div class="peer-dot' + (activeExitIp ? '' : ' on') + '"></div>' +
+      '<div class="exit-name">None<small>Direct connection</small></div>' +
+      '<span class="exit-check">' + (activeExitIp ? '' : '✓') + '</span></div>';
+    rows += exitPeers.map(function (p) {
+      var ip = ip4(p), active = activeExitIp && ip === activeExitIp;
+      return '<div class="exit-row" data-exit="' + esc(ip) + '">' +
+        '<div class="peer-dot' + (p.Online ? ' on' : '') + '"></div>' +
+        '<div class="exit-name">' + esc(p.HostName || '?') + '<small>' + esc(ip) + (p.Online ? '' : ' · offline') + '</small></div>' +
+        '<span class="exit-check">' + (active ? '✓' : '') + '</span></div>';
+    }).join('');
+    if (rows !== exitSig) { exitSig = rows; $('exit-list').innerHTML = rows; }
+  } else { exitSig = ''; }
+
   /* settings switches */
   setSwitch('sw-boot', S.bootOn);
   if (!S.busy) {
     setSwitch('sw-dns', S.magicDnsOn === true);
+    setSwitch('sw-corp', S.prefs ? S.prefs.CorpDNS !== false : true);
     setSwitch('sw-routes', S.prefs ? !!S.prefs.RouteAll : false);
     setSwitch('sw-exit-adv', S.prefs ? (String(S.prefs.AdvertiseRoutes || '').indexOf('0.0.0.0/0') !== -1) : false);
     setSwitch('sw-lan', S.prefs ? !!S.prefs.ExitNodeAllowLANAccess : false);
+    setSwitch('sw-shields', S.prefs ? !!S.prefs.ShieldsUp : false);
+    setSwitch('sw-ssh', S.prefs ? !!S.prefs.RunSSH : false);
   }
+
+  /* advertised subnets */
+  var adv = S.prefs ? S.prefs.AdvertiseRoutes : null;
+  setText('kv-subnets', adv && adv.length ? String(Object.keys(adv).map ? adv.join(', ') : adv) : (S.daemonUp ? 'none' : '—'));
 
   /* hostname */
   if (on && !S.hostnameSet) setHostname();
@@ -277,16 +304,20 @@ function doConnect() {
   /* Build tailscale up flags from stored prefs so settings persist
      across reboots — bare `tailscale up` resets to defaults. */
   var prefs = S.prefs || {};
-  var dns = prefs.CorpDNS === true ? 'true' : 'false';
+  var dns = prefs.CorpDNS !== false ? 'true' : 'false';
   var routes = prefs.RouteAll === true ? 'true' : 'false';
   var exitAdv = (String(prefs.AdvertiseRoutes || '').indexOf('0.0.0.0/0') !== -1) ? 'true' : 'false';
   var lan = prefs.ExitNodeAllowLANAccess === true ? 'true' : 'false';
+  var shields = prefs.ShieldsUp === true ? 'true' : 'false';
+  var ssh = prefs.RunSSH === true ? 'true' : 'false';
   var upCmd = 'tailscale up --accept-dns=' + dns +
     ' --accept-routes=' + routes +
     ' --advertise-exit-node=' + exitAdv +
-    ' --exit-node-allow-lan-access=' + lan;
+    ' --exit-node-allow-lan-access=' + lan +
+    ' --shields-up=' + shields +
+    ' --ssh=' + ssh;
   setTimeout(function () {
-    exec(ENV + SERVICE + ' start >/dev/null 2>&1; R=$?; sleep 2; timeout 15 ' + upCmd + ' >/dev/null 2>&1 || true; echo RC=$R', 60000)
+    exec(ENV + 'EXIT=$(cat /data/adb/tailscale/exitnode 2>/dev/null); ' + SERVICE + ' start >/dev/null 2>&1; R=$?; sleep 2; timeout 15 ' + upCmd + ' ${EXIT:+--exit-node=$EXIT} >/dev/null 2>&1 || true; echo RC=$R', 60000)
       .then(function (r) {
         clearBusy();
         snack(/RC=0/.test(r.stdout) ? 'Connected' : 'Start failed');
@@ -371,6 +402,62 @@ function setPref(flag, on) {
         clearBusy();
         var rc = (String(r.stdout).match(/RC=(\d+)/) || [])[1];
         snack(rc === '0' ? (on ? flag + ' on' : flag + ' off') : 'Failed (RC=' + rc + ')');
+        poll();
+      });
+  }, 0);
+}
+
+/* ===== exit node ===== */
+function setExitNode(ip) {
+  if (S.busy) return;
+  if (!S.daemonUp) { snack('Start Tailscale first'); return; }
+  setBusy('Applying…');
+  setTimeout(function () {
+    var persist = ip ? 'echo -n "' + ip + '" > /data/adb/tailscale/exitnode 2>/dev/null; ' : 'rm -f /data/adb/tailscale/exitnode 2>/dev/null; ';
+    exec(ENV + 'tailscale set --exit-node=' + ip + ' 2>&1; R=$?; ' + persist + 'echo RC=$R', 20000)
+      .then(function (r) {
+        clearBusy();
+        var rc = (String(r.stdout).match(/RC=(\d+)/) || [])[1];
+        snack(rc === '0' ? (ip ? 'Exit node: ' + ip : 'Direct connection') : 'Failed (RC=' + rc + ')');
+        poll();
+      });
+  }, 0);
+}
+
+/* ===== subnet routes ===== */
+function openSubnets() {
+  if (!S.daemonUp) { snack('Start Tailscale first'); return; }
+  var adv = S.prefs ? S.prefs.AdvertiseRoutes : null;
+  $('subnets-input').value = (adv && adv.length) ? String((adv.join ? adv.join(',') : adv)) : '';
+  setHidden('subnets-overlay', false);
+}
+function closeSubnets() { setHidden('subnets-overlay', true); }
+function applySubnets() {
+  var val = String($('subnets-input').value || '').replace(/\s+/g, '');
+  closeSubnets();
+  if (S.busy) return;
+  setBusy('Applying…');
+  setTimeout(function () {
+    exec(ENV + 'tailscale set --advertise-routes=' + val + ' 2>&1; echo RC=$?', 20000)
+      .then(function (r) {
+        clearBusy();
+        snack(/RC=0/.test(r.stdout) ? (val ? 'Advertising ' + val : 'Routes cleared') : 'Failed');
+        poll();
+      });
+  }, 0);
+}
+
+/* ===== taildrop ===== */
+function receiveFiles() {
+  if (S.busy) return;
+  if (!isRunning()) { snack('Connect first'); return; }
+  setBusy('Waiting for files…');
+  setTimeout(function () {
+    exec(ENV + 'mkdir -p /sdcard/Taildrop; timeout 110 tailscale file get /sdcard/Taildrop 2>&1; echo RC=$?', 120000)
+      .then(function (r) {
+        clearBusy();
+        var out = String(r.stdout);
+        snack(/RC=0/.test(out) ? 'Files saved to /sdcard/Taildrop' : 'No files received');
         poll();
       });
   }, 0);
@@ -482,6 +569,15 @@ function wire() {
     catch (err) { snack(ip); }
   });
   $('row-boot').addEventListener('click', toggleBoot);
+  $('exit-list').addEventListener('click', function (e) {
+    var row = e.target.closest('.exit-row');
+    if (!row) return;
+    setExitNode(row.getAttribute('data-exit') || '');
+  });
+  $('row-subnets').addEventListener('click', openSubnets);
+  $('subnets-cancel-btn').addEventListener('click', closeSubnets);
+  $('subnets-apply-btn').addEventListener('click', applySubnets);
+  $('row-taildrop').addEventListener('click', receiveFiles);
   /* MagicDNS toggle: controls iptables DNAT rules via magicdns.sh */
   (function () {
     var row = $('row-dns'), sw = $('sw-dns');
@@ -509,15 +605,17 @@ function wire() {
         });
     }, 0);
   }
-  var prefRows = { 'row-routes': '--accept-routes', 'row-exit-adv': '--advertise-exit-node', 'row-lan': '--exit-node-allow-lan-access' };
+  var prefRows = { 'row-corp': '--accept-dns', 'row-routes': '--accept-routes', 'row-exit-adv': '--advertise-exit-node', 'row-lan': '--exit-node-allow-lan-access', 'row-shields': '--shields-up', 'row-ssh': '--ssh' };
   Object.keys(prefRows).forEach(function (rowId) {
     $(rowId).addEventListener('click', function (e) {
       if (e.target.closest('md-switch')) return;
       var flag = prefRows[rowId], current = false;
-      if (flag === '--accept-dns') current = S.prefs && !!S.prefs.CorpDNS;
+      if (flag === '--accept-dns') current = S.prefs && S.prefs.CorpDNS !== false;
       else if (flag === '--accept-routes') current = S.prefs && !!S.prefs.RouteAll;
       else if (flag === '--advertise-exit-node') current = S.prefs && String(S.prefs.AdvertiseRoutes || '').indexOf('0.0.0.0/0') !== -1;
-      else current = S.prefs && !!S.prefs.ExitNodeAllowLANAccess;
+      else if (flag === '--exit-node-allow-lan-access') current = S.prefs && !!S.prefs.ExitNodeAllowLANAccess;
+      else if (flag === '--shields-up') current = S.prefs && !!S.prefs.ShieldsUp;
+      else if (flag === '--ssh') current = S.prefs && !!S.prefs.RunSSH;
       setPref(flag, !current);
     });
   });
@@ -525,7 +623,7 @@ function wire() {
      only the local visual state and fires `change` (the row click above
      deliberately ignores it). Without a change handler nothing was applied
      and the next poll snapped the switch back to the old value. */
-  var swFlags = { 'sw-routes': '--accept-routes', 'sw-exit-adv': '--advertise-exit-node', 'sw-lan': '--exit-node-allow-lan-access' };
+  var swFlags = { 'sw-corp': '--accept-dns', 'sw-routes': '--accept-routes', 'sw-exit-adv': '--advertise-exit-node', 'sw-lan': '--exit-node-allow-lan-access', 'sw-shields': '--shields-up', 'sw-ssh': '--ssh' };
   Object.keys(swFlags).forEach(function (swId) {
     var el = $(swId);
     if (!el) return;
@@ -556,7 +654,7 @@ function wire() {
   });
 
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') { closeLogs(); setHidden('logout-overlay', true); }
+    if (e.key === 'Escape') { closeLogs(); setHidden('logout-overlay', true); closeSubnets(); }
   });
 
   window.addEventListener('pageshow', function () { schedulePoll(200); });

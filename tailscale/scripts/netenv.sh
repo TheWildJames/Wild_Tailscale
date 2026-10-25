@@ -124,6 +124,10 @@ $(for ip in $2; do printf 'nameserver %s\n' "$ip"; done)"
 sync_route() { # $1 = iface, $2 = gw4, $3 = gw6
     local iface="$1" gw="$2" gw6="$3"
 
+    # Subnet-router / exit-node duties need forwarding; harmless otherwise.
+    sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+    sysctl -w net.ipv6.conf.all.forwarding=1 >/dev/null 2>&1 || true
+
     if [ -n "$iface" ]; then
         if [ -n "$gw" ]; then
             ip route replace default via "$gw" dev "$iface" table "$SHADOW_TABLE" 2>/dev/null ||
