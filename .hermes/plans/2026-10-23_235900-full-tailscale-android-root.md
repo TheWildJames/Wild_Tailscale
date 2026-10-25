@@ -518,7 +518,33 @@ Replace 15s polling with instant network change detection.
 
 5. **MagicDNS via iptables DNAT vs DNS proxy** — The DNAT approach is simpler but riskier (breaks all DNS if daemon is down). The DNS proxy is safer but more complex. Recommend implementing both (proxy primary, DNAT fallback).
 
-6. **Open question:** Should we explore using `bindhosts` (which already solves the `/etc/hosts` problem on Android) as a reference for how to do systemless file replacement? Its approach might be directly applicable.
+## Task 20: App-parity WebUI (shipped in v2.9.0.0)
 
-7. **Open question:** The user mentioned "systemless replacement" and "replace system partition" — does this mean they want to modify the actual system partition (dangerous) or use the Magisk/KernelSU overlay system (safe)? Clarify before implementing.
-PYEOF
+Matched the official Android app's settings surface in the module WebUI:
+
+- **Exit node picker** (Home card): lists tailnet exit nodes from `status --json`, tap to `tailscale set --exit-node=<ip>` or None to clear. Choice persisted in `/data/adb/tailscale/exitnode` and re-applied on `tailscale up` at connect/boot (prefs only carry ExitNodeID, not usable by `up`).
+- **Use Tailscale DNS** toggle: `tailscale set --accept-dns` (CorpDNS). Default ON at connect (app parity: the app always uses tailnet DNS). The read-only `/etc/resolv.conf` warning is cosmetic — daemon keeps running.
+- **MagicDNS redirect** toggle: iptables DNAT via `magicdns.sh` + flag file (unchanged).
+- **Subnet routes** card: view advertised routes, set/clear via dialog (`tailscale set --advertise-routes=`).
+- **Shields up / SSH** toggles: `tailscale set --shields-up`, `--ssh`; persisted across reconnects in `doConnect`.
+- **Taildrop** card: `tailscale file get /sdcard/Taildrop` with 110s wait.
+- **netenv.sh**: enables `net.ipv4.ip_forward` + v6 forwarding (needed when advertising subnets / running as exit node).
+
+Verified without device: `node --check`, `bash -n`, headless Chromium over HTTP with `?mock=1` + virtual-time budget — status Connected, 2 peer rows, 2 exit rows, no console errors.
+
+## Task 21 (TODO): Per-app split tunneling via iptables owner match
+
+The app's split-tunneling (include/exclude apps) maps to `iptables -m owner --uid-owner <uid>` rules on a root module. Needs: package→UID mapping (`pm list packages -U`), WebUI multi-select, rules that survive netenv sync. Not started.
+
+## Task 22 (TODO): Tailnet Lock UI
+
+`tailscale lock` CLI exists. Needs key setup/status WebUI. Not started.
+
+## Task 23 (TODO): Serve/Funnel status
+
+`tailscale serve status` output in Doctor or a dedicated card. Not started.
+
+## Open questions (kept)
+
+6. Should we explore using `bindhosts` (which already solves the `/etc/hosts` problem on Android) as a reference for systemless file replacement?
+7. The user mentioned "systemless replacement" and "replace system partition" — module uses the safe Magisk/KernelSU overlay, never touches the real system partition.
