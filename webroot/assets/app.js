@@ -92,8 +92,7 @@ function poll() {
     'echo @@M3; tailscale status --json 2>/dev/null; ' +
     'echo @@M4; tailscale debug prefs --json 2>/dev/null; ' +
     'echo @@M5; [ -e /data/adb/tailscale/NOBOOT ] && echo NB || echo OK; ' +
-    'echo @@M6; /data/adb/tailscale/scripts/magicdns.sh status 2>/dev/null; ' +
-    'echo @@M7';
+    'echo @@M6';
   return exec(cmd, 20000).then(function (r) {
     var out = String(r.stdout);
     function between(a, b) {
@@ -105,14 +104,12 @@ function poll() {
     var statusStr = between('M3', 'M4');
     var prefsStr = between('M4', 'M5');
     var bootStr = between('M5', 'M6');
-    var magicStr = between('M6', 'M7');
 
     if (ver) { pollVersion = ver; }
     try { S.status = statusStr ? JSON.parse(statusStr) : null; } catch (e) { S.status = null; }
     S.daemonUp = !!S.status;
     try { S.prefs = prefsStr ? JSON.parse(prefsStr) : null; } catch (e) { S.prefs = null; }
     S.bootOn = bootStr !== 'NB';
-    S.magicDnsOn = /ON/.test(magicStr);
 
     render();
   }).catch(function () { render(); });
@@ -218,19 +215,6 @@ function render() {
 
   /* settings switches */
   setSwitch('sw-boot', S.bootOn);
-  if (!S.busy) {
-    setSwitch('sw-dns', S.magicDnsOn === true);
-    setSwitch('sw-corp', S.prefs ? S.prefs.CorpDNS !== false : true);
-    setSwitch('sw-routes', S.prefs ? !!S.prefs.RouteAll : false);
-    setSwitch('sw-exit-adv', S.prefs ? (String(S.prefs.AdvertiseRoutes || '').indexOf('0.0.0.0/0') !== -1) : false);
-    setSwitch('sw-lan', S.prefs ? !!S.prefs.ExitNodeAllowLANAccess : false);
-    setSwitch('sw-shields', S.prefs ? !!S.prefs.ShieldsUp : false);
-    setSwitch('sw-ssh', S.prefs ? !!S.prefs.RunSSH : false);
-  }
-
-  /* advertised subnets */
-  var adv = S.prefs ? S.prefs.AdvertiseRoutes : null;
-  setText('kv-subnets', adv && adv.length ? String(Object.keys(adv).map ? adv.join(', ') : adv) : (S.daemonUp ? 'none' : '—'));
 
   /* hostname */
   if (on && !S.hostnameSet) setHostname();
@@ -392,21 +376,6 @@ function toggleBoot() {
   }, 0);
 }
 
-function setPref(flag, on) {
-  if (S.busy) return;
-  if (!S.daemonUp) { snack('Start Tailscale first'); return; }
-  setBusy('Applying…');
-  setTimeout(function () {
-    exec(ENV + 'tailscale set ' + flag + '=' + (on ? 'true' : 'false') + ' 2>&1; echo RC=$?', 20000)
-      .then(function (r) {
-        clearBusy();
-        var rc = (String(r.stdout).match(/RC=(\d+)/) || [])[1];
-        snack(rc === '0' ? (on ? flag + ' on' : flag + ' off') : 'Failed (RC=' + rc + ')');
-        poll();
-      });
-  }, 0);
-}
-
 /* ===== exit node ===== */
 function setExitNode(ip) {
   if (S.busy) return;
@@ -419,45 +388,6 @@ function setExitNode(ip) {
         clearBusy();
         var rc = (String(r.stdout).match(/RC=(\d+)/) || [])[1];
         snack(rc === '0' ? (ip ? 'Exit node: ' + ip : 'Direct connection') : 'Failed (RC=' + rc + ')');
-        poll();
-      });
-  }, 0);
-}
-
-/* ===== subnet routes ===== */
-function openSubnets() {
-  if (!S.daemonUp) { snack('Start Tailscale first'); return; }
-  var adv = S.prefs ? S.prefs.AdvertiseRoutes : null;
-  $('subnets-input').value = (adv && adv.length) ? String((adv.join ? adv.join(',') : adv)) : '';
-  setHidden('subnets-overlay', false);
-}
-function closeSubnets() { setHidden('subnets-overlay', true); }
-function applySubnets() {
-  var val = String($('subnets-input').value || '').replace(/\s+/g, '');
-  closeSubnets();
-  if (S.busy) return;
-  setBusy('Applying…');
-  setTimeout(function () {
-    exec(ENV + 'tailscale set --advertise-routes=' + val + ' 2>&1; echo RC=$?', 20000)
-      .then(function (r) {
-        clearBusy();
-        snack(/RC=0/.test(r.stdout) ? (val ? 'Advertising ' + val : 'Routes cleared') : 'Failed');
-        poll();
-      });
-  }, 0);
-}
-
-/* ===== taildrop ===== */
-function receiveFiles() {
-  if (S.busy) return;
-  if (!isRunning()) { snack('Connect first'); return; }
-  setBusy('Waiting for files…');
-  setTimeout(function () {
-    exec(ENV + 'mkdir -p /sdcard/Taildrop; timeout 110 tailscale file get /sdcard/Taildrop 2>&1; echo RC=$?', 120000)
-      .then(function (r) {
-        clearBusy();
-        var out = String(r.stdout);
-        snack(/RC=0/.test(out) ? 'Files saved to /sdcard/Taildrop' : 'No files received');
         poll();
       });
   }, 0);
@@ -574,64 +504,6 @@ function wire() {
     if (!row) return;
     setExitNode(row.getAttribute('data-exit') || '');
   });
-  $('row-subnets').addEventListener('click', openSubnets);
-  $('subnets-cancel-btn').addEventListener('click', closeSubnets);
-  $('subnets-apply-btn').addEventListener('click', applySubnets);
-  $('row-taildrop').addEventListener('click', receiveFiles);
-  /* MagicDNS toggle: controls iptables DNAT rules via magicdns.sh */
-  (function () {
-    var row = $('row-dns'), sw = $('sw-dns');
-    if (row) row.addEventListener('click', function (e) {
-      if (e.target.closest('md-switch')) return;
-      var current = S.magicDnsOn === true;
-      toggleMagicDns(!current);
-    });
-    if (sw) sw.addEventListener('change', function () {
-      if (S.busy) { render(); return; }
-      toggleMagicDns(!!sw.selected);
-    });
-  })();
-  function toggleMagicDns(on) {
-    if (S.busy) return;
-    if (!S.daemonUp) { snack('Start Tailscale first'); return; }
-    setBusy('Applying…');
-    setTimeout(function () {
-      exec(ENV + 'tailscale/scripts/magicdns.sh ' + (on ? 'on' : 'off') + ' 2>&1; echo RC=$?', 20000)
-        .then(function (r) {
-          clearBusy();
-          S.magicDnsOn = on;
-          snack(on ? 'MagicDNS on' : 'MagicDNS off');
-          poll();
-        });
-    }, 0);
-  }
-  var prefRows = { 'row-corp': '--accept-dns', 'row-routes': '--accept-routes', 'row-exit-adv': '--advertise-exit-node', 'row-lan': '--exit-node-allow-lan-access', 'row-shields': '--shields-up', 'row-ssh': '--ssh' };
-  Object.keys(prefRows).forEach(function (rowId) {
-    $(rowId).addEventListener('click', function (e) {
-      if (e.target.closest('md-switch')) return;
-      var flag = prefRows[rowId], current = false;
-      if (flag === '--accept-dns') current = S.prefs && S.prefs.CorpDNS !== false;
-      else if (flag === '--accept-routes') current = S.prefs && !!S.prefs.RouteAll;
-      else if (flag === '--advertise-exit-node') current = S.prefs && String(S.prefs.AdvertiseRoutes || '').indexOf('0.0.0.0/0') !== -1;
-      else if (flag === '--exit-node-allow-lan-access') current = S.prefs && !!S.prefs.ExitNodeAllowLANAccess;
-      else if (flag === '--shields-up') current = S.prefs && !!S.prefs.ShieldsUp;
-      else if (flag === '--ssh') current = S.prefs && !!S.prefs.RunSSH;
-      setPref(flag, !current);
-    });
-  });
-  /* md-switch is natively interactive: tapping the switch itself toggles
-     only the local visual state and fires `change` (the row click above
-     deliberately ignores it). Without a change handler nothing was applied
-     and the next poll snapped the switch back to the old value. */
-  var swFlags = { 'sw-corp': '--accept-dns', 'sw-routes': '--accept-routes', 'sw-exit-adv': '--advertise-exit-node', 'sw-lan': '--exit-node-allow-lan-access', 'sw-shields': '--shields-up', 'sw-ssh': '--ssh' };
-  Object.keys(swFlags).forEach(function (swId) {
-    var el = $(swId);
-    if (!el) return;
-    el.addEventListener('change', function () {
-      if (S.busy) { render(); return; }
-      setPref(swFlags[swId], !!el.selected);
-    });
-  });
   var bootSw = $('sw-boot');
   if (bootSw) bootSw.addEventListener('change', function () {
     if (S.busy) { render(); return; }
@@ -654,7 +526,7 @@ function wire() {
   });
 
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') { closeLogs(); setHidden('logout-overlay', true); closeSubnets(); }
+    if (e.key === 'Escape') { closeLogs(); setHidden('logout-overlay', true); }
   });
 
   window.addEventListener('pageshow', function () { schedulePoll(200); });

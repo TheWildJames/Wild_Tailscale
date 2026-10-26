@@ -170,13 +170,8 @@ install_tailnet_rules() {
 }
 
 sync_magicdns() {
-    # Respect user toggle: if disabled, remove rules and don't re-add
-    if [ ! -f "${TS_RUN_DIR}/magicdns.enabled" ]; then
-        iptables -t nat -D OUTPUT -p udp --dport 53 -j DNAT --to-destination 100.100.100.100:53 2>/dev/null || true
-        iptables -t nat -D OUTPUT -p tcp --dport 53 -j DNAT --to-destination 100.100.100.100:53 2>/dev/null || true
-        return 0
-    fi
-
+    # MagicDNS redirect is core behavior (matches the app: tailnet DNS always
+    # on while connected). No toggle — the flag file mechanism is gone.
     # Check if tailscaled is running (has a Tailscale IP)
     local ts_ip
     ts_ip=$( (/data/adb/tailscale/bin/tailscale ip -4 2>/dev/null || tailscale ip -4 2>/dev/null) | head -1)

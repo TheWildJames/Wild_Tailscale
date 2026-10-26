@@ -67,7 +67,7 @@ This module runs `tailscaled` with the following command:
 tailscaled --tun=tailscale0 --statedir=/data/adb/tailscale --socket=/data/adb/tailscale/run/tailscaled.sock --port=41641 -no-logs-no-support
 ```
 
-The daemon drives a real kernel TUN device (`tailscale0`) and installs Android policy-routing rules (priority 9000 for `100.64.0.0/10` and `fd7a:115c:a1e0::/48` → main table), so **apps on the phone reach tailnet IPs directly** — no official Tailscale app, no SOCKS proxy needed. Set `TS_TUN=userspace-networking` in `tailscale/settings.sh` to fall back to daemon-only reachability; if TUN mode fails to start, the service falls back automatically.
+The daemon drives a real kernel TUN device (`tailscale0`) and installs Android policy-routing rules (priority 9000 for `100.64.0.0/10` and `fd7a:115c:a1e0::/48` → main table), so **apps on the phone reach tailnet IPs directly** — no official Tailscale app, no SOCKS proxy needed. TUN mode is mandatory; there is no userspace fallback.
 
 The state file for tailscaled is stored at `/data/adb/tailscale/tailscaled.state`, and the log output is written to `/data/adb/tailscale/run/tailscaled.log`. The `tailscale` command is a small wrapper that points the CLI at the module's socket (`tailscale.bin` is the real CLI binary).
 
@@ -135,7 +135,7 @@ The module runs `tailscaled` with a real kernel TUN (`--tun=tailscale0`), so app
 3. Verify the policy rules exist: `ip rule | grep 9000`
 4. Check connectivity: `tailscale ping <tailnet_ip>`, then `curl <tailnet_ip>:<port> -vI`
 
-If the daemon fell back to userspace-networking (check `/data/adb/tailscale/run/tailscaled.log` for `falling back to userspace-networking`), apps cannot route into the tailnet — check `/dev/net/tun` exists and rerun `tailscaled.service restart`.
+If the daemon won't start, check `/dev/net/tun` exists and rerun `tailscaled.service restart`.
 
 ### Subnet routes not working
 

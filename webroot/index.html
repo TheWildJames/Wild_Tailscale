@@ -73,52 +73,9 @@
 
         <div class="card">
             <div class="card-title">Tailscale</div>
-            <div class="setting-row" id="row-corp">
-                <div class="setting-info"><div>Use Tailscale DNS</div><small>Tailnet names + upstream resolvers via 100.100.100.100</small></div>
-                <md-switch id="sw-corp" icons></md-switch>
-            </div>
-            <div class="setting-row" id="row-dns">
-                <div class="setting-info"><div>MagicDNS redirect</div><small>Steer app DNS to tailnet resolver (iptables DNAT)</small></div>
-                <md-switch id="sw-dns" icons></md-switch>
-            </div>
-            <div class="setting-row" id="row-routes">
-                <div class="setting-info"><div>Accept routes</div><small>Use subnet routes from other nodes</small></div>
-                <md-switch id="sw-routes" icons></md-switch>
-            </div>
-            <div class="setting-row" id="row-exit-adv">
-                <div class="setting-info"><div>Advertise exit node</div><small>Let others route through this phone</small></div>
-                <md-switch id="sw-exit-adv" icons></md-switch>
-            </div>
-            <div class="setting-row" id="row-lan">
-                <div class="setting-info"><div>Allow LAN access</div><small>Reach local network via exit node</small></div>
-                <md-switch id="sw-lan" icons></md-switch>
-            </div>
-            <div class="setting-row" id="row-shields">
-                <div class="setting-info"><div>Shields up</div><small>Block all incoming tailnet traffic</small></div>
-                <md-switch id="sw-shields" icons></md-switch>
-            </div>
-            <div class="setting-row" id="row-ssh">
-                <div class="setting-info"><div>Tailscale SSH</div><small>Allow tailnet SSH to this device</small></div>
-                <md-switch id="sw-ssh" icons></md-switch>
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="card-title">Subnet routes</div>
             <div class="setting-row">
-                <div class="setting-info"><div>Advertised</div><small id="kv-subnets">—</small></div>
-            </div>
-            <div class="setting-row tap" id="row-subnets">
-                <div class="setting-info"><div>Set advertised routes</div><small>e.g. 192.168.1.0/24 — empty clears</small></div>
-                <span class="chevron">›</span>
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="card-title">Taildrop</div>
-            <div class="setting-row tap" id="row-taildrop">
-                <div class="setting-info"><div>Receive files</div><small>Accept pending files to /sdcard/Taildrop (2 min)</small></div>
-                <span class="chevron">›</span>
+                <div class="setting-info"><div>Settings</div><small>Coming soon</small></div>
+                <md-switch id="sw-tailscale-ph" icons disabled></md-switch>
             </div>
         </div>
 
@@ -188,19 +145,6 @@
         <div class="dialog-actions">
             <md-text-button id="logout-cancel-btn">Cancel</md-text-button>
             <md-filled-button id="logout-confirm-btn">Log out</md-filled-button>
-        </div>
-    </div>
-</div>
-
-<!-- Subnets input -->
-<div class="overlay" id="subnets-overlay" hidden>
-    <div class="dialog">
-        <div class="dialog-title">Advertised routes</div>
-        <div class="dialog-body">Comma-separated CIDRs, e.g. 192.168.1.0/24. Empty clears.</div>
-        <input class="text-input mono" id="subnets-input" placeholder="192.168.1.0/24" autocomplete="off">
-        <div class="dialog-actions">
-            <md-text-button id="subnets-cancel-btn">Cancel</md-text-button>
-            <md-filled-button id="subnets-apply-btn">Apply</md-filled-button>
         </div>
     </div>
 </div>
