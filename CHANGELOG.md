@@ -1,3 +1,7 @@
+## v2.9.1.0
+
+- d43a83d docs: plan tasks 20-23 (app-parity shipped, split-tunnel/lock/serve TODO)
+
 ## v2.9.0.0
 
 - 185d1ad docs: Tailscale app vs root module comparison, update plan

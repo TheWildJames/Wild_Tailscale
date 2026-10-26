@@ -188,10 +188,15 @@ else
 fi
 [ -n "${DEBUG:-}" ] && { set +ue; } || true
 
-# Ensure /etc/resolv.conf exists for tailscaled DNS resolution
-# (Android doesn't ship one — Go's resolver falls back to [::1]:53)
-if [ ! -f /etc/resolv.conf ]; then
-    mkdir -p /etc 2>/dev/null
-    printf "nameserver 8.8.8.8\nnameserver 8.8.4.4\n" > /etc/resolv.conf 2>/dev/null || \
-        echo "! Could not create /etc/resolv.conf — DNS may not work"
+# Seed the systemless overlay target inside the MODULE dir (always writable).
+# Do NOT write /etc/resolv.conf directly: /etc is a symlink to /system/etc,
+# which is read-only, so that always fails and only scares the user.
+# The overlay file is picked up at boot (Magisk magic mount; on KernelSU only
+# with the meta-overlayfs metamodule). Runtime DNS is handled without any
+# reboot by netenv.sh's bind-mount + tailscaled's private /etc namespace.
+if [ ! -f "$MODPATH/system/etc/resolv.conf" ]; then
+    mkdir -p "$MODPATH/system/etc" 2>/dev/null
+    printf "nameserver 8.8.8.8\nnameserver 8.8.4.4\n" > "$MODPATH/system/etc/resolv.conf" 2>/dev/null && \
+        ui_print "- Seeded system/etc/resolv.conf overlay (applies at boot)" || \
+        ui_print "! Could not seed system/etc/resolv.conf overlay"
 fi
