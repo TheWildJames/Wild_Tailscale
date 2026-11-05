@@ -1,3 +1,21 @@
+## v2.11.0.0
+
+- **Fast network-follow** — `netenv.sh` no longer waits out a 15 s poll: a cheap route+addr check every 3 s triggers the full sync only when something changed (60 s backstop for DNS-only changes). WiFi↔cellular handovers are picked up in seconds.
+- **Cellular fix** — on `rmnet` there is no gateway, so the old code left a stale WiFi default in table 253 and the daemon died on handover. A dev-only default is now installed when no gateway exists (verified live on data).
+- **Watch loop self-heals** — healthcheck restarts a dead `netenv` watch loop from the pidfile (it had died silently before), and the daemon's private `/etc` resolv.conf now mirrors the active network's resolvers on every sync, so a fresh daemon on data no longer inherits stale WiFi DNS (that was the 8-failed-joins-then-WiFi-works bug).
+- **Hosts-file MagicDNS (bindhosts-style)** — `/etc/hosts` is regenerated from the live netmap and bind-mounted, with the correct `system_file` SELinux label (missing label silently broke lookups). `ping stinkdesk` now works by name.
+- **Status line single source of truth** — new `moddesc.sh` writes the manager's module-list status; called from the WebUI poll, the action button, boot and the healthcheck, so the list stops lying.
+- **Faster action button** — fixed `sleep 3` waits replaced with process polling, socket-wait before `tailscale up`, `tailscale down` capped at 8 s, and phased progress output ("Daemon starting… / Control channel ready… / Join attempt n/8…") with timestamps.
+- **Connect no longer races the daemon** — both the action button and the WebUI retry `up` until the backend actually reports Running/NeedsLogin instead of a single blind attempt; Connect now reports the real outcome.
+- **WebUI smoothness** — switches flip optimistically (no busy freeze, toast instead), `setSwitch` writes only on change so poll passes stop restarting the Material animation, and status dot/action button/health list are change-guarded. `debug prefs` no longer passed `--json` (it errors on 1.104 and left the UI permanently showing "on").
+- **Cache-busting** — `app.js?v=<versionCode>` in `index.html`, bumped by `version-bump.sh`, so manager WebViews stop serving stale JS across updates.
+- **Update download with progress bar** — About → Check for update now offers an in-WebUI download (busybox wget + byte-count progress) to `/sdcard/Download`, cancelable.
+- **Diagnostics bundle** — About → Diagnostics bundle writes `ts-diag-<timestamp>.tar.gz` (status, prefs, netcheck, routes, DNAT, active network, resolv.conf, hosts, all logs) to `/sdcard/Download`.
+- **Install** — `customize.sh` seeds `system/etc/resolv.conf` and `system/etc/hosts` in the module dir instead of trying to write read-only `/etc` and printing a bogus warning.
+- **Resilient DNS** — the global `/etc` write is best-effort: on setups without an overlay target (KernelSU without a metamodule) the daemon's private `/etc` copy carries DNS, and nothing fails loudly.
+- **Reverted** per-app DNS split (never shipped).
+- **Audit** — removed TUN run-mode toggle and the userspace fallback (TUN only), dropped the unused `dnsproxy.sh` and `magicdns.sh` toggle machinery, and repaired line-number corruption that had crept into the WebUI files.
+
 ## v2.9.1.0
 
 - d43a83d docs: plan tasks 20-23 (app-parity shipped, split-tunnel/lock/serve TODO)

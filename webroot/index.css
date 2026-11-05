@@ -320,6 +320,20 @@ body {
 .dialog-title { font-size: 20px; font-weight: 600; margin-bottom: 12px; }
 .dialog-body { font-size: 14px; color: var(--md-sys-color-on-surface-variant); margin-bottom: 20px; }
 .dialog-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.progress-track {
+    height: 8px;
+    border-radius: 4px;
+    background: var(--md-sys-color-surface-container-high);
+    overflow: hidden;
+    margin-bottom: 20px;
+}
+.progress-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 4px;
+    background: var(--md-sys-color-primary);
+    transition: width 0.3s ease;
+}
 
 /* ===== Snackbar ===== */
 .snackbar {

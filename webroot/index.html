@@ -6,7 +6,7 @@
     <title>Tailscale</title>
     <link rel="stylesheet" href="./index.css">
     <script type="module" crossorigin src="./assets/md.js"></script>
-    <script type="module" crossorigin src="./assets/app.js"></script>
+    <script type="module" crossorigin src="./assets/app.js?v=02110000"></script>
 </head>
 <body>
 
@@ -73,11 +73,16 @@
 
         <div class="card">
             <div class="card-title">Tailscale</div>
+            <div class="setting-row" id="row-corp">
+                <div class="setting-info"><div>Use Tailscale DNS</div><small>Tailnet names + upstream resolvers via 100.100.100.100</small></div>
+                <md-switch id="sw-corp" icons></md-switch>
+            </div>
             <div class="setting-row">
                 <div class="setting-info"><div>Settings</div><small>Coming soon</small></div>
                 <md-switch id="sw-tailscale-ph" icons disabled></md-switch>
             </div>
         </div>
+
 
         <div class="card">
             <div class="card-title">Session</div>
@@ -99,6 +104,10 @@
             </div>
             <div class="setting-row tap" id="row-doctor">
                 <div class="setting-info"><div>Doctor</div><small>Run Tailscale diagnostics</small></div>
+                <span class="chevron">›</span>
+            </div>
+            <div class="setting-row tap" id="row-diag">
+                <div class="setting-info"><div>Diagnostics bundle</div><small>Save logs + state to /sdcard/Download</small></div>
                 <span class="chevron">›</span>
             </div>
             <div class="setting-row tap" id="row-update">
@@ -145,6 +154,18 @@
         <div class="dialog-actions">
             <md-text-button id="logout-cancel-btn">Cancel</md-text-button>
             <md-filled-button id="logout-confirm-btn">Log out</md-filled-button>
+        </div>
+    </div>
+</div>
+
+<!-- Download progress -->
+<div class="overlay" id="dl-overlay" hidden>
+    <div class="dialog">
+        <div class="dialog-title">Downloading update</div>
+        <div class="dialog-body mono" id="dl-text">Starting…</div>
+        <div class="progress-track"><div class="progress-fill" id="dl-fill"></div></div>
+        <div class="dialog-actions">
+            <md-text-button id="dl-cancel-btn">Cancel</md-text-button>
         </div>
     </div>
 </div>

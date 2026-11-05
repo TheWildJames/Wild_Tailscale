@@ -47,6 +47,11 @@ fi
 sed -i "s/^version=.*/version=$NEW_VERSION/" module.prop
 sed -i "s/^versionCode=.*/versionCode=$NEW_VERSION_CODE/" module.prop
 
+# Bust the manager WebView's script cache: the ?v= query makes each release
+# a fresh URL. (Stale app.js behind the same URL caused "toggle stuck"
+# reports across updates.)
+sed -i "s|assets/app.js?v=[0-9]*|assets/app.js?v=$NEW_VERSION_CODE|" webroot/index.html
+
 # TODO: Remove update-arm.json and update-arm64.json, use single update.json instead
 # Update all JSON files
 for json_file in update.json update-arm.json update-arm64.json; do

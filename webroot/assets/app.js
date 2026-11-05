@@ -35,7 +35,7 @@ if (isMock) {
       else if (/version=.*module.prop/.test(cmd)) out = 'version=v9.9.9\n';
       else if (/versionCode=.*module.prop/.test(cmd)) out = '99900\n';
       else if (/NOBOOT/.test(cmd)) out = 'OK\n';
-      else if (/tailscale login/.test(cmd)) out = 'https://login.tailscale.com/a/mock123\n';
+      else if (/productsign|tailscale login/.test(cmd)) out = 'https://login.tailscale.com/a/mock123\n';
       else if (/tail /.test(cmd)) out = 'mock log line 1\nmock log line 2\n';
       else out = 'RC=0\n';
       setTimeout(function () { window[cb](0, out, ''); }, 50);
@@ -83,14 +83,31 @@ function needsLogin() { return S.daemonUp && S.status && (S.status.BackendState 
 /* ===== DOM helpers ===== */
 function setText(id, s) { var el = $(id); if (el && el.textContent !== s) el.textContent = s; }
 function setHidden(id, h) { var el = $(id); if (el && el.hidden !== !!h) el.hidden = !!h; }
-function setSwitch(id, on) { var el = $(id); if (!el) return; if (on) el.setAttribute('selected', ''); else el.removeAttribute('selected'); }
+function setClass(id, cls) { var el = $(id); if (!el) return; if (el._cls !== cls) { el._cls = cls; el.className = cls; } }
+/* setSwitch writes only on actual change: blind writes every poll restart
+   the Material transition and fight the user's tap (the bindhosts pattern
+   is per-toggle sync, never a global re-render over user input). */
+var swCache = {};
+function setSwitch(id, on) {
+  on = !!on;
+  var el = $(id);
+  if (!el) return;
+  if (swCache[id] !== on) {
+    swCache[id] = on;
+    try { el.selected = on; } catch (e) {}
+    if (on) el.setAttribute('selected', '');
+    else el.removeAttribute('selected');
+  } else {
+    try { if (!!el.selected !== on) el.selected = on; } catch (e) {}
+  }
+}
 
 /* ===== poll — one exec, @@M markers ===== */
 function poll() {
   var cmd = ENV +
     'echo @@M2; tailscale version 2>/dev/null | head -n 1; ' +
     'echo @@M3; tailscale status --json 2>/dev/null; ' +
-    'echo @@M4; tailscale debug prefs --json 2>/dev/null; ' +
+    'echo @@M4; tailscale debug prefs 2>/dev/null; ' +
     'echo @@M5; [ -e /data/adb/tailscale/NOBOOT ] && echo NB || echo OK; ' +
     'echo @@M6';
   return exec(cmd, 20000).then(function (r) {
@@ -130,12 +147,12 @@ function schedulePoll(delay) {
 function bump() { lastAction = Date.now(); }
 
 /* ===== render ===== */
-var peersSig = '', exitSig = '';
+var peersSig = '', exitSig = '', healthSig = '';
 function render() {
   var st = S.status, on = isRunning(), login = needsLogin();
 
   /* status dot */
-  $('status-dot').className = 'status-dot ' + (S.busy ? 'wait' : on ? 'on' : 'off');
+  setClass('status-dot', 'status-dot ' + (S.busy ? 'wait' : on ? 'on' : 'off'));
 
   /* status text */
   if (S.busy) { setText('status-state', S.busyMsg); setText('status-sub', ''); }
@@ -147,10 +164,10 @@ function render() {
 
   /* action button */
   var btn = $('action-btn');
-  if (S.busy) { btn.textContent = S.busyMsg || 'Working…'; btn.disabled = true; }
-  else if (login) { btn.textContent = 'Log in'; btn.disabled = false; }
-  else if (on) { btn.textContent = 'Disconnect'; btn.disabled = false; }
-  else { btn.textContent = 'Connect'; btn.disabled = false; }
+  var label = S.busy ? (S.busyMsg || 'Working…') : login ? 'Log in' : on ? 'Disconnect' : 'Connect';
+  var dis = !!S.busy;
+  if (btn._label !== label) { btn._label = label; btn.textContent = label; }
+  if (btn._dis !== dis) { btn._dis = dis; btn.disabled = dis; }
 
   /* login card */
   if (login && st && st.AuthURL) S.loginUrl = String(st.AuthURL);
@@ -161,7 +178,11 @@ function render() {
   /* health */
   var health = st && st.Health && st.Health.length ? st.Health : null;
   setHidden('health-card', !health);
-  if (health) $('health-list').innerHTML = health.map(function (h) { return '<div class="health-item">' + esc(h) + '</div>'; }).join('');
+  var hsig = health ? health.join('|') : '';
+  if (hsig !== healthSig) {
+    healthSig = hsig;
+    if (health) $('health-list').innerHTML = health.map(function (h) { return '<div class="health-item">' + esc(h) + '</div>'; }).join('');
+  }
 
   /* info card */
   var s = st && st.Self;
@@ -215,6 +236,9 @@ function render() {
 
   /* settings switches */
   setSwitch('sw-boot', S.bootOn);
+  if (!S.busy) {
+    setSwitch('sw-corp', S.prefs ? S.prefs.CorpDNS !== false : true);
+  }
 
   /* hostname */
   if (on && !S.hostnameSet) setHostname();
@@ -223,18 +247,10 @@ function render() {
   maybeUpdateDesc();
 }
 
-/* ===== module.prop status writer =====
-   Mirrors the VPN state into the manager's module list so you can see
-   ⚡/⚠/⛔ at a glance without opening the WebUI. Writes only on change. */
+/* ===== module.prop status writer — single source of truth is
+   tailscale/scripts/moddesc.sh (same script the action button, boot and
+   healthcheck use). Writes only on state change. */
 var lastDescKey = null;
-var DESC_MSG = {
-  stopped: '\u26d4 Stopped',
-  connected: '\u26a1 VPN connected',
-  login: '\u26a0 Login required',
-  starting: '\u23f3 Starting',
-  disconnected: '\u26d4 VPN disconnected',
-  machineauth: '\u23f3 Machine auth'
-};
 function maybeUpdateDesc() {
   if (isMock) return;
   var st = S.status, key;
@@ -247,11 +263,23 @@ function maybeUpdateDesc() {
   else return;
   if (key === lastDescKey) return;
   lastDescKey = key;
-  var T = new Date().toTimeString().slice(0, 5);
-  var desc = '[ \u23f2 ' + T + ' | ' + DESC_MSG[key] + ' ]';
-  exec(ENV + 'sed -i "s/^description=.*/description=' + desc + '/" ' + MODPROP + ' 2>/dev/null; echo OK', 8000);
+  exec(ENV + '/data/adb/tailscale/scripts/moddesc.sh ' + key + ' >/dev/null 2>&1; echo OK', 8000);
 }
 
+/* ===== diagnostics bundle ===== */
+function runDiagBundle() {
+  setBusy('Collecting…');
+  setTimeout(function () {
+    exec(ENV + '/data/adb/tailscale/scripts/diag-bundle.sh 2>&1; echo RC=$?', 90000)
+      .then(function (r) {
+        clearBusy();
+        var m = String(r.stdout).match(/(\/sdcard\/Download\/ts-diag-\S+\.tar\.gz)/);
+        if (m) snack('Saved ' + m[1].split('/').pop());
+        else snack('Bundle failed');
+        poll();
+      });
+  }, 0);
+}
 /* ===== doctor ===== */
 function runDoctor() {
   setHidden('log-overlay', false);
@@ -294,18 +322,36 @@ function doConnect() {
   var lan = prefs.ExitNodeAllowLANAccess === true ? 'true' : 'false';
   var shields = prefs.ShieldsUp === true ? 'true' : 'false';
   var ssh = prefs.RunSSH === true ? 'true' : 'false';
-  var upCmd = 'tailscale up --accept-dns=' + dns +
+  var upBase = 'tailscale up --accept-dns=' + dns +
     ' --accept-routes=' + routes +
     ' --advertise-exit-node=' + exitAdv +
     ' --exit-node-allow-lan-access=' + lan +
     ' --shields-up=' + shields +
     ' --ssh=' + ssh;
   setTimeout(function () {
-    exec(ENV + 'EXIT=$(cat /data/adb/tailscale/exitnode 2>/dev/null); ' + SERVICE + ' start >/dev/null 2>&1; R=$?; sleep 2; timeout 15 ' + upCmd + ' ${EXIT:+--exit-node=$EXIT} >/dev/null 2>&1 || true; echo RC=$R', 60000)
+    /* Phased busy text so the button narrates instead of sitting on one
+       message: service start, then socket wait + join retries. */
+    setBusy('Starting daemon...');
+    exec(ENV + 'EXIT=$(cat /data/adb/tailscale/exitnode 2>/dev/null); ' + SERVICE + ' start >/dev/null 2>&1; echo RC=$?', 60000)
       .then(function (r) {
-        clearBusy();
-        snack(/RC=0/.test(r.stdout) ? 'Connected' : 'Start failed');
-        poll();
+        if (!/RC=0/.test(r.stdout)) { clearBusy(); snack('Start failed'); poll(); return; }
+        setBusy('Joining tailnet...');
+        var upCmd = upBase + ' ${EXIT:+--exit-node=$EXIT}';
+        var waitUp = 'for i in $(seq 1 12); do [ -S /data/adb/tailscale/run/tailscaled.sock ] && break; sleep 0.5; done; ' +
+        'OK=1; for i in $(seq 1 8); do sleep 1; timeout 8 ' + upCmd +
+          ' >/dev/null 2>&1 || true; ' +
+          'ST=$(timeout 5 tailscale status --json 2>/dev/null); ' +
+          'case "$ST" in *BackendState*Running*) OK=0; break;; ' +
+          '*BackendState*NeedsLogin*|*BackendState*NoState*) OK=2; break;; esac; done; echo RC=$OK';
+        exec(ENV + 'EXIT=$(cat /data/adb/tailscale/exitnode 2>/dev/null); ' + waitUp, 100000)
+          .then(function (r2) {
+            clearBusy();
+            var rc2 = (String(r2.stdout).match(/RC=([0-9]+)/) || [])[1];
+            if (rc2 === '0') snack('Connected');
+            else if (rc2 === '2') snack('Log in required');
+            else snack('Start failed');
+            poll();
+          });
       });
   }, 0);
 }
@@ -363,15 +409,22 @@ function doRestart() {
   }, 0);
 }
 
+var bootBusy = false;
 function toggleBoot() {
-  if (S.busy) return;
-  setBusy('Saving…');
+  if (bootBusy) { render(); return; }
+  var target = !S.bootOn; // optimistic flip, like the DNS switch
+  S.bootOn = target;
+  render();
+  bump();
+  bootBusy = true;
   setTimeout(function () {
-    var cmd = S.bootOn ? ENV + 'touch /data/adb/tailscale/NOBOOT; echo OK' : ENV + 'rm -f /data/adb/tailscale/NOBOOT; echo OK';
-    exec(cmd, 8000).then(function () {
-      S.bootOn = !S.bootOn;
-      clearBusy();
-      snack(S.bootOn ? 'Will start on boot' : "Won't start on boot");
+    var cmd = target ? ENV + 'rm -f /data/adb/tailscale/NOBOOT; echo OK'
+                     : ENV + 'touch /data/adb/tailscale/NOBOOT; echo OK';
+    exec(cmd, 8000).then(function (r) {
+      bootBusy = false;
+      if (!/OK/.test(r.stdout)) { S.bootOn = !target; snack('Failed'); poll(); }
+      else snack(target ? 'Will start on boot' : "Won't start on boot");
+      // Success needs no poll: optimistic state stands, scheduled poll reconciles.
     });
   }, 0);
 }
@@ -389,6 +442,32 @@ function setExitNode(ip) {
         var rc = (String(r.stdout).match(/RC=(\d+)/) || [])[1];
         snack(rc === '0' ? (ip ? 'Exit node: ' + ip : 'Direct connection') : 'Failed (RC=' + rc + ')');
         poll();
+      });
+  }, 0);
+}
+
+/* ===== Use Tailscale DNS (optimistic: flip now, confirm in background) ===== */
+var dnsBusy = false;
+function setCorpDns(on) {
+  if (dnsBusy) { render(); return; }
+  if (!S.daemonUp) { snack('Start Tailscale first'); render(); return; }
+  dnsBusy = true;
+  if (S.prefs) S.prefs.CorpDNS = on;
+  render(); // instant visual — no busy freeze
+  bump();
+  setTimeout(function () {
+    exec(ENV + 'tailscale set --accept-dns=' + (on ? 'true' : 'false') + ' 2>&1; echo RC=$?', 20000)
+      .then(function (r) {
+        dnsBusy = false;
+        if (!/RC=0/.test(r.stdout)) {
+          if (S.prefs) S.prefs.CorpDNS = !on; // revert on failure
+          snack('Failed');
+          poll(); // reconcile after failure only; the scheduled poll
+        } else {
+          snack(on ? 'Tailscale DNS on' : 'Tailscale DNS off');
+          // No immediate poll: optimistic state is already rendered and the
+          // scheduled poll reconciles within seconds. Saves a bridge roundtrip.
+        }
       });
   }, 0);
 }
@@ -433,6 +512,59 @@ function shareLogs() {
     .then(function () { snack('Sharing logs…'); });
 }
 
+/* ===== update download with progress (busybox wget + byte counts) ===== */
+var dlTimer = null, dlDest = '', dlPending = null;
+function dlProgress(pct, text) {
+  var fill = $('dl-fill');
+  if (fill) fill.style.width = Math.max(0, Math.min(100, pct)) + '%';
+  setText('dl-text', text);
+}
+function downloadUpdate(url, name) {
+  dlDest = "/sdcard/Download/" + name;
+  setHidden("dl-overlay", false);
+  dlProgress(0, "Starting... 0%");
+  var run = "/data/adb/tailscale/run";
+  var cmd = "rm -f " + run + "/dl.done " + run + "/dl.pid; " +
+    "TOT=$(busybox wget --spider -S '" + url + "' 2>&1 | grep Content-Length | awk '{print $2}'); echo $TOT >" + run + "/dl.total; " +
+    "echo 'busybox wget -O \"" + dlDest + "\" \"" + url + "\" >/dev/null 2>&1; echo $? >" + run + "/dl.done' >" + run + "/dl.sh; " +
+    "nohup sh " + run + "/dl.sh >/dev/null 2>&1 & echo $! >" + run + "/dl.pid; echo STARTED";
+  exec(ENV + cmd, 15000).then(function () {
+    if (dlTimer) clearInterval(dlTimer);
+    dlTimer = setInterval(pollDl, 1000);
+  });
+}
+function pollDl() {
+  var run = "/data/adb/tailscale/run";
+  exec(ENV + "SZ=$(stat -c %s '" + dlDest + "' 2>/dev/null || echo 0); TOT=$(cat " + run + "/dl.total 2>/dev/null); DONE=$(cat " + run + "/dl.done 2>/dev/null); : ${SZ:=0}; : ${TOT:=0}; echo $((SZ*100/(TOT>0?TOT:1))); echo ---; echo ${DONE:-}", 8000)
+    .then(function (r) {
+      var parts = String(r.stdout).split("---");
+      var pct = parseInt(parts[0], 10) || 0;
+      var done = (parts[1] || "").trim();
+      if (done === "") {
+        dlProgress(pct, "Downloading... " + pct + "%");
+        return; // still running
+      }
+      clearInterval(dlTimer); dlTimer = null;
+      setHidden("dl-overlay", true);
+      if (done === "0") {
+        snack("Saved to " + dlDest + " — install from your manager");
+        setText("update-current", "Downloaded — tap zip to install");
+      } else {
+        exec(ENV + "rm -f " + dlDest, 8000);
+        snack("Download failed (rc=" + done + ")");
+        setText("update-current", "");
+      }
+    });
+}
+function cancelDl() {
+  var run = "/data/adb/tailscale/run";
+  if (dlTimer) { clearInterval(dlTimer); dlTimer = null; }
+  exec(ENV + "cat " + run + "/dl.pid 2>/dev/null | xargs -r kill 2>/dev/null; rm -f " + run + "/dl.pid " + run + "/dl.done " + run + "/dl.total " + run + "/dl.sh " + dlDest + " 2>/dev/null; echo OK", 8000);
+  setHidden("dl-overlay", true);
+  snack("Download cancelled");
+  setText("update-current", "");
+}
+
 /* ===== update check ===== */
 var currentVersionCode = '';
 function checkUpdate() {
@@ -447,8 +579,16 @@ function checkUpdate() {
         var local = parseInt(currentVersionCode, 10) || 0;
         if (remote > local) {
           setText('update-current', 'v' + (info.version || '?') + ' available');
-          snack('Update available: ' + info.version + ' — opening releases');
-          setTimeout(function () { exec(ENV + 'am start -a android.intent.action.VIEW -d ' + GITHUB + '/releases >/dev/null 2>&1'); }, 1000);
+          var fname = String(info.zipUrl || '').split('/').pop() || 'update.zip';
+          /* Tap again to confirm the download (can be tens of MB on data). */
+          if (dlPending && dlPending.url === info.zipUrl) {
+            dlPending = null;
+            snack('Downloading ' + fname);
+            downloadUpdate(info.zipUrl, fname);
+          } else {
+            dlPending = { url: info.zipUrl, name: fname };
+            snack('Update available: ' + info.version + ' — tap again to download');
+          }
         } else {
           setText('update-current', 'Up to date (v' + (info.version || '?') + ')');
           snack('You are on the latest version');
@@ -499,6 +639,17 @@ function wire() {
     catch (err) { snack(ip); }
   });
   $('row-boot').addEventListener('click', toggleBoot);
+  (function () {
+    var row = $('row-corp'), sw = $('sw-corp');
+    if (row) row.addEventListener('click', function (e) {
+      if (e.target.closest('md-switch')) return;
+      setCorpDns(!(S.prefs && S.prefs.CorpDNS !== false));
+    });
+    if (sw) sw.addEventListener('change', function () {
+      if (S.busy) { render(); return; }
+      setCorpDns(!!sw.selected);
+    });
+  })();
   $('exit-list').addEventListener('click', function (e) {
     var row = e.target.closest('.exit-row');
     if (!row) return;
@@ -517,10 +668,12 @@ function wire() {
 
   $('row-logs').addEventListener('click', openLogs);
   $('row-doctor').addEventListener('click', runDoctor);
+  $('row-diag').addEventListener('click', runDiagBundle);
   $('log-close-btn').addEventListener('click', closeLogs);
   $('log-copy-btn').addEventListener('click', copyLogs);
   $('log-share-btn').addEventListener('click', shareLogs);
   $('row-update').addEventListener('click', checkUpdate);
+  $('dl-cancel-btn').addEventListener('click', cancelDl);
   $('row-github').addEventListener('click', function () {
     exec(ENV + 'am start -a android.intent.action.VIEW -d ' + GITHUB + ' >/dev/null 2>&1');
   });

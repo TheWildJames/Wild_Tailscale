@@ -68,5 +68,7 @@ start_service
 start_inotifyd
 # Drop the retired MagicDNS flag file (toggle removed; DNAT is always on)
 rm -f "${TS_RUN_DIR}/magicdns.enabled" 2>/dev/null || true
+# Manager list status: healthcheck + WebUI correct it from here.
+"${TS_DIR}/scripts/moddesc.sh" starting 2>/dev/null || true
 start_netenv_watch
 start_healthcheck

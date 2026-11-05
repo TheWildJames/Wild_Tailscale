@@ -200,3 +200,11 @@ if [ ! -f "$MODPATH/system/etc/resolv.conf" ]; then
         ui_print "- Seeded system/etc/resolv.conf overlay (applies at boot)" || \
         ui_print "! Could not seed system/etc/resolv.conf overlay"
 fi
+# Same for /etc/hosts (bindhosts-style): guarantees the netenv bind target
+# exists at boot so plain hostnames resolve without touching DNS.
+if [ ! -f "$MODPATH/system/etc/hosts" ]; then
+    mkdir -p "$MODPATH/system/etc" 2>/dev/null
+    printf "127.0.0.1 localhost\n::1 ip6-localhost\n" > "$MODPATH/system/etc/hosts" 2>/dev/null && \
+        ui_print "- Seeded system/etc/hosts overlay (applies at boot)" || \
+        ui_print "! Could not seed system/etc/hosts overlay"
+fi

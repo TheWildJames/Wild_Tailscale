@@ -104,9 +104,14 @@ program(){
     # shellcheck disable=SC2086
     nohup sh -c "$TS_LAUNCH" > "${logdir}/${program_name}.log" 2>&1 &
     PID=$!
-    # log Debug "Command: ${command}"
-    sleep 3 # waiting for program really started
-    PID_INFO=$(ps -p $PID -o pid,stime | grep $PID)
+    # Poll instead of a fixed sleep: the wrapper process exists immediately,
+    # the old `sleep 3` just burned time on every start.
+    i=0; PID_INFO=""
+    while [ $i -lt 6 ]; do
+      PID_INFO=$(ps -p $PID -o pid=,stime= 2>/dev/null)
+      [ -n "$PID_INFO" ] && break
+      sleep 0.5; i=$((i+1))
+    done
     if [ -n "$PID_INFO" ]; then
       # shellcheck disable=SC2086
       set -- $PID_INFO
@@ -136,7 +141,11 @@ program(){
       [ -t 1 ] && echo "${yellow}--------------------------------------------${normal}"
       return 0
     fi
-    sleep 3 # wait the binary has stopped properly
+    sleep 1 # brief grace period, then poll for exit instead of sleeping blind
+    i=0
+    while [ $i -lt 8 ] && busybox pgrep -f "${command}" >/dev/null 2>&1; do
+      sleep 0.5; i=$((i+1))
+    done
     if ! busybox pgrep -f "${command}" >/dev/null 2>&1; then
       log Info "✘ ${program_name} shutting down, service is stopped."
       log Info "✘ ${program_name} disconnected."
@@ -157,7 +166,10 @@ program(){
           pkill -9 "${program_name}" >/dev/null 2>&1 || true
         fi
       fi
-      sleep 2
+      i=0
+      while [ $i -lt 6 ] && busybox pgrep -f "${command}" >/dev/null 2>&1; do
+        sleep 0.5; i=$((i+1))
+      done
       if ! busybox pgrep -f "${command}" >/dev/null 2>&1; then
         log Info "✔ done, you can sleep peacefully."
         if [ ! -z "${post_down}" ];then post_down  2>&1; fi
